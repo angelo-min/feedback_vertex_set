@@ -4,55 +4,61 @@ import java.awt.Point;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Random;
+import java.util.*;
 
 public class DefaultTeam {
 
-  public ArrayList<Point> calculFVS(ArrayList<Point> points, int edgeThreshold) {
-    ArrayList<Point> result = (ArrayList<Point>)points.clone();
+  public ArrayList<Point> calculFVS(ArrayList<Point> _points, int edgeThreshold) {
+    HashSet<Point> points = new HashSet<>(_points);
+    ArrayList<Point> result = null;
+    ArrayList<Point> greed = greedy(points,edgeThreshold);
 
     for (int i=0;i<3;i++){
-      ArrayList<Point> fvs = localSearch(greedy(points,edgeThreshold),points,edgeThreshold);
+      ArrayList<Point> fvs = localSearch(greed,points,edgeThreshold);
 
-      System.out.println("MAIN. Current sol: " + result.size() + ". Found next sol: "+fvs.size());
+      System.out.println("MAIN. Current sol: " + (result == null ? _points.size() : result.size()) + ". Found next sol: "+fvs.size());
 
-      if (fvs.size()<result.size()) result = fvs;
+      if (result == null || fvs.size()<result.size()) result = fvs;
     }
     
-    return result;
+    return new ArrayList<>(result);
     //return greedy(points,edgeThreshold);
   }
 
-  private ArrayList<Point> greedy(ArrayList<Point> pointsIn, int edgeThreshold) {
-    ArrayList<Point> points = (ArrayList<Point>)pointsIn.clone();
-    ArrayList<Point> result = (ArrayList<Point>)pointsIn.clone();
+  private ArrayList<Point> greedy(HashSet<Point> points, int edgeThreshold) {
+    ArrayList<Point> result = null;
     
     for (int i=0;i<100;i++) {
-      points.sort((a, b) -> degree(b, points, edgeThreshold) - degree(a, points, edgeThreshold));
-      ArrayList<Point> rest = removeDuplicates(points);
-      ArrayList<Point> fvs = new ArrayList<Point>();
+      HashMap<Point, Integer> degrees = new HashMap<>();
+      for (Point p: points) degrees.put(p, degree(p, points, edgeThreshold));
+      ArrayList<Point> pointsSorted = new ArrayList<>(points);
+      pointsSorted.sort((a, b) -> degrees.get(b) - degrees.get(a));
+      ArrayList<Point> fvs = new ArrayList<>();
 
 
       while (!isSolution(fvs,points,edgeThreshold)) {
-        Point choosenOne=rest.get(0);
-        for (Point p: rest) if (degree(p,rest,edgeThreshold)>degree(choosenOne,rest,edgeThreshold)) choosenOne=p;
+        Point choosenOne=pointsSorted.get(0);
+        /*for (Point p: pointsSorted) {
+          if (degree(p, points, edgeThreshold) >
+              degree(choosenOne, points, edgeThreshold)) {
+            choosenOne=p;
+          }
+        }*/
         fvs.add(choosenOne);
-        rest.removeAll(fvs);
+        pointsSorted.removeAll(fvs);
       }
       
 //      System.out.println("GR. Current sol: " + result.size() + ". Found next sol: "+fvs.size());
 
-      if (fvs.size()<result.size()) result = fvs;
+      if (result == null || fvs.size()<result.size()) result = fvs;
 
     }
 
     return result;
   }
-  private ArrayList<Point> localSearch(ArrayList<Point> firstSolution, ArrayList<Point> points, int edgeThreshold) {
-    ArrayList<Point> current = removeDuplicates(firstSolution);
-    ArrayList<Point> next = (ArrayList<Point>)current.clone();
+  private ArrayList<Point> localSearch(ArrayList<Point> firstSolution, HashSet<Point> points, int edgeThreshold) {
+    ArrayList<Point> current = firstSolution;
+    ArrayList<Point> next = current;
 
     System.out.println("LS. First sol: " + current.size());
 
@@ -67,65 +73,69 @@ public class DefaultTeam {
 
 //  return current;
   }
-  private ArrayList<Point> remove2add1(ArrayList<Point> candidate, ArrayList<Point> points, int edgeThreshold) {
-    ArrayList<Point> test = removeDuplicates(candidate);
+  private ArrayList<Point> remove2add1(ArrayList<Point> candidate, HashSet<Point> points, int edgeThreshold) {
+    ArrayList<Point> test = new ArrayList<>(candidate);
     long seed = System.nanoTime();
     Collections.shuffle(test, new Random(seed));
-    ArrayList<Point> rest = removeDuplicates(points);
-    rest.removeAll(test);
+    HashSet<Point> rest = new HashSet<>(points);
+    test.forEach(rest::remove);
+    HashSet<Point> solutionRest = new HashSet<>(rest);
 
     for (int i=0;i<test.size();i++) {
+      Point p = test.get(i);
+      solutionRest.add(p);
       for (int j=i+1;j<test.size();j++) {
-        Point q = test.remove(j);
-        Point p = test.remove(i);
+        Point q = test.get(j);
+        solutionRest.add(q);
         
         for (Point r: rest) {
-          test.add(r);
-          if (isSolution(test,points,edgeThreshold)) return test;
-          test.remove(r);
+          solutionRest.remove(r);
+          if (isSolution(new HashSet<>(solutionRest),edgeThreshold)) {
+            test.remove(j);
+            test.remove(i);
+            test.add(r);
+            return test;
+          }
+          solutionRest.add(r);
         }
 
-        test.add(i,p);
-        test.add(j,q);
+        solutionRest.remove(q);
       }
+      solutionRest.remove(p);
     }
 
     return candidate;
   }
-  private boolean isSolution(ArrayList<Point> candidateIn, ArrayList<Point> pointsIn, int edgeThreshold) {
-    ArrayList<Point> candidate = removeDuplicates(candidateIn);
-    ArrayList<Point> rest = removeDuplicates(pointsIn);
-    rest.removeAll(candidate);
-    ArrayList<Point> visited = new ArrayList<Point>();
+  private boolean isSolution(ArrayList<Point> candidate, HashSet<Point> pointsIn, int edgeThreshold) {
+    HashSet<Point> rest = new HashSet<>(pointsIn);
+    candidate.forEach(rest::remove);
+    return isSolution(rest, edgeThreshold);
+  }
+  private boolean isSolution(HashSet<Point> rest, int edgeThreshold) {
+    ArrayList<Point> visited = new ArrayList<>();
 
     while (!rest.isEmpty()) {
       visited.clear();
-      visited.add(rest.remove(0));
+      Iterator<Point> it = rest.iterator();
+      visited.add(it.next());
+      it.remove();
       for (int i=0;i<visited.size();i++) {
         for (Point p: rest) if (isEdge(visited.get(i),p,edgeThreshold)) {
-          for (Point q: visited) if (!q.equals(visited.get(i)) && isEdge(p,q,edgeThreshold)) return false;
+          for (Point q: visited)
+            if (!q.equals(visited.get(i)) && isEdge(p,q,edgeThreshold))
+              return false;
           visited.add(p);
         }
-        rest.removeAll(visited);
+        visited.forEach(rest::remove);
       }
     }
 
     return true;
   }
-  private ArrayList<Point> removeDuplicates(ArrayList<Point> points) {
-    ArrayList<Point> result = (ArrayList<Point>)points.clone();
-    for (int i=0;i<result.size();i++) {
-      for (int j=i+1;j<result.size();j++) if (result.get(i).equals(result.get(j))) {
-        result.remove(j);
-        j--;
-      }
-    }
-    return result;
-  }
   private boolean isEdge(Point p, Point q, int edgeThreshold) {
     return p.distance(q)<edgeThreshold;
   }
-  private int degree(Point p, ArrayList<Point> points, int edgeThreshold) {
+  private int degree(Point p, Collection<Point> points, int edgeThreshold) {
     int degree=-1;
     for (Point q: points) if (isEdge(p,q,edgeThreshold)) degree++;
     return degree;
