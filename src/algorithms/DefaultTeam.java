@@ -5,6 +5,8 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DefaultTeam {
 
@@ -13,7 +15,7 @@ public class DefaultTeam {
     ArrayList<Point> result = null;
     ArrayList<Point> greed = greedy(points,edgeThreshold);
 
-    for (int i=0;i<3;i++){
+    for (int i=0;i<6;i++){
       ArrayList<Point> fvs = localSearch(greed,points,edgeThreshold);
 
       System.out.println("MAIN. Current sol: " + (result == null ? _points.size() : result.size()) + ". Found next sol: "+fvs.size());
@@ -60,15 +62,15 @@ public class DefaultTeam {
     ArrayList<Point> current = firstSolution;
     ArrayList<Point> next = current;
 
-    System.out.println("LS. First sol: " + current.size());
+    //System.out.println("LS. First sol: " + current.size());
 
     do {
       current = next;
       next = remove2add1(current, points,edgeThreshold);
-      System.out.println("LS. Current sol: " + current.size() + ". Found next sol: "+next.size());
+      //System.out.println("LS. Current sol: " + current.size() + ". Found next sol: "+next.size());
     } while (score(current)>score(next));
     
-    System.out.println("LS. Last sol: " + current.size());
+    //System.out.println("LS. Last sol: " + current.size());
     return next;
 
 //  return current;
@@ -79,32 +81,44 @@ public class DefaultTeam {
     Collections.shuffle(test, new Random(seed));
     HashSet<Point> rest = new HashSet<>(points);
     test.forEach(rest::remove);
-    HashSet<Point> solutionRest = new HashSet<>(rest);
+    AtomicBoolean done = new AtomicBoolean(false);
+    Semaphore semaphore = new Semaphore(0);
 
     for (int i=0;i<test.size();i++) {
       Point p = test.get(i);
+      HashSet<Point> solutionRest = new HashSet<>(rest);
       solutionRest.add(p);
-      for (int j=i+1;j<test.size();j++) {
-        Point q = test.get(j);
-        solutionRest.add(q);
-        
-        for (Point r: rest) {
-          solutionRest.remove(r);
-          if (isSolution(new HashSet<>(solutionRest),edgeThreshold)) {
-            test.remove(j);
-            test.remove(i);
-            test.add(r);
-            return test;
-          }
-          solutionRest.add(r);
-        }
+      int finalI = i;
+      new Thread(() -> {
+        for (int j = finalI + 1; j < test.size(); j++) {
+          if (done.get()) break;
+          Point q = test.get(j);
+          solutionRest.add(q);
 
-        solutionRest.remove(q);
-      }
-      solutionRest.remove(p);
+          for (Point r : rest) {
+            solutionRest.remove(r);
+            if (isSolution(new HashSet<>(solutionRest), edgeThreshold)) {
+              if (done.getAndSet(true)) break;
+              test.remove(j);
+              test.remove(finalI);
+              test.add(r);
+              semaphore.release(test.size());
+            }
+            solutionRest.add(r);
+          }
+
+          solutionRest.remove(q);
+        }
+        semaphore.release();
+      }).start();
     }
 
-    return candidate;
+    try {
+      semaphore.acquire(test.size());
+    } catch (InterruptedException e) {
+      throw new RuntimeException(e);
+    }
+    return test;
   }
   private boolean isSolution(ArrayList<Point> candidate, HashSet<Point> pointsIn, int edgeThreshold) {
     HashSet<Point> rest = new HashSet<>(pointsIn);
