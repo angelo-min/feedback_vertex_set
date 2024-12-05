@@ -40,7 +40,7 @@ class Point {
 
 public class DefaultTeam {
 
-    private static final int MAX_POPULATION = 20; //max number of solutions in the population
+    private static final int MAX_POPULATION = 200; //max number of solutions in the population
     private static final int MAX_ITERATIONS = 2024; //max number of iterations
 
     private boolean[] edgeMap;
@@ -241,7 +241,7 @@ public class DefaultTeam {
             }else{
                 no_improvement_counter++;
             }
-            if(no_improvement_counter >= 3){
+            if(no_improvement_counter >= 5){
                 break;
             }
         }
@@ -299,7 +299,6 @@ public class DefaultTeam {
     }
     private ArrayList<Point> localSearch(ArrayList<Point> solution, PointSet points, int edgeThreshold) {
         ArrayList<Point> current = new ArrayList<>(solution);
-        int noImprovementCounter = 0;
 
         //System.out.println("LS. First sol: " + current.size());
         ArrayList<Point> next;
@@ -316,8 +315,6 @@ public class DefaultTeam {
 
         //System.out.println("LS. Last sol: " + current.size());
         return current;
-
-//  return current;
     }
     private ArrayList<Point> remove2add1(ArrayList<Point> candidate, PointSet points, int edgeThreshold) {
         ArrayList<Point> test = new ArrayList<>(candidate);
@@ -326,13 +323,24 @@ public class DefaultTeam {
         test.forEach(rest::remove);
         AtomicBoolean done = new AtomicBoolean(false);
         Semaphore semaphore = new Semaphore(0);
-
         for (int i=0;i<test.size();i++) {
             Point p = test.get(i);
             PointSet solutionRest = new PointSet(rest);
             solutionRest.add(p);
             int finalI = i;
-            new Thread(() -> {
+
+            ArrayList<Point>[] neighbors = new ArrayList[pointCount];
+            for (Point q: solutionRest) {
+                ArrayList<Point> qNeighbors = new ArrayList<>();
+                for (Point r: solutionRest) {
+                    if (q != r && isEdge(q, r, edgeThreshold)) {
+                        qNeighbors.add(r);
+                    }
+                }
+                neighbors[q.id] = qNeighbors;
+            }
+
+            Thread thread = new Thread(() -> {
                 for (int j = finalI + 1; j < test.size(); j++) {
                     if (done.get()) break;
                     Point q = test.get(j);
@@ -340,7 +348,7 @@ public class DefaultTeam {
 
                     for (Point r : rest) {
                         solutionRest.remove(r);
-                        if (isSolution(solutionRest, edgeThreshold)) {
+                        if (isSolution(solutionRest, edgeThreshold, neighbors, q, r)) {
                             if (done.getAndSet(true)) break;
                             test.remove(j);
                             test.remove(finalI);
@@ -353,7 +361,8 @@ public class DefaultTeam {
                     solutionRest.remove(q);
                 }
                 semaphore.release();
-            }).start();
+            });
+            thread.start();
         }
 
         try {
@@ -377,18 +386,16 @@ public class DefaultTeam {
             }
         }
 
-        // ScheduledExecutorService to handle timeout
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
         Semaphore semaphore = new Semaphore(0);
 
-        // Thread pool for parallel processing
         int threadCount = Math.min(Runtime.getRuntime().availableProcessors(), currentSolution.size());
         ExecutorService threadPool = Executors.newFixedThreadPool(threadCount);
 
-        // Start a timeout task
+        // Timeout task
         executor.schedule(() -> {
-            done.set(true); // Signal threads to stop
-            semaphore.release(threadCount); // Release all threads waiting on semaphore
+            done.set(true);
+            semaphore.release(threadCount);
         }, 1, TimeUnit.SECONDS);
 
         for (int t = 0; t < threadCount; t++) {
@@ -414,7 +421,7 @@ public class DefaultTeam {
                     while ((r2 = restArr[random.nextInt(restArr.length)]) == r1) {}
                     currentRest.remove(r2);
 
-                    if (isSolution(currentRest, edgeThreshold)) {
+                    if (isSolution(currentRest, edgeThreshold, null, null, null)) {
                         if (!done.getAndSet(true)) break;
                         PointSet solution = new PointSet(points);
                         solution.removeAll(currentRest);
@@ -429,28 +436,28 @@ public class DefaultTeam {
                     currentRest.remove(p2);
                     currentRest.remove(p1);
                 }
-                semaphore.release(); // Release when thread finishes
+                semaphore.release();
             });
         }
 
         try {
-            semaphore.acquire(threadCount); // Wait for all threads to complete or timeout
+            semaphore.acquire(threadCount);
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
 
-        threadPool.shutdownNow(); // Ensure all threads are terminated
-        executor.shutdownNow(); // Stop the timeout task
+        threadPool.shutdownNow();
+        executor.shutdownNow();
         return currentSolution;
     }
     private boolean isSolution(ArrayList<Point> candidate, PointSet pointsIn, int edgeThreshold) {
         PointSet rest = new PointSet(pointsIn);
         candidate.forEach(rest::remove);
-        return isSolution(rest, edgeThreshold);
+        return isSolution(rest, edgeThreshold, null, null, null);
     }
-    private boolean isSolution(PointSet rest, int edgeThreshold) {
+    private boolean isSolution(PointSet rest, int edgeThreshold, ArrayList<Point>[] neighbors, Point q, Point r) {
         if (rest.isEmpty()) return true;
-        Point[] restArray = new Point[rest.size];
+        Point[] restArray = new Point[rest.size]; // for quick iteration
         {
             Iterator<Point> setIt = rest.iterator();
             for (int i = 0; i < restArray.length; i++) {
@@ -471,10 +478,25 @@ public class DefaultTeam {
                 Pair<Point, Point> frame = stack.pop();
                 Point parent = frame.first, current = frame.second;
                 notVisited.remove(current);
-                for (Point other: restArray) {
-                    if (other != current && other != parent && isEdge(current, other, edgeThreshold)) {
-                        if (!notVisited.contains(other)) return false;
-                        stack.push(new Pair<>(current, other));
+                if (neighbors == null || current == q) {
+                    for (Point other : restArray) {
+                        if (other != current && other != parent && isEdge(current, other, edgeThreshold)) {
+                            if (!notVisited.contains(other)) return false;
+                            stack.push(new Pair<>(current, other));
+                        }
+                    }
+                } else {
+                    ArrayList<Point> curNeighbors = neighbors[current.id];
+                    for (int i = 0, l = curNeighbors.size(); i < l; i++) {
+                        Point other = curNeighbors.get(i);
+                        if (other != r && other != parent) {
+                            if (!notVisited.contains(other)) return false;
+                            stack.push(new Pair<>(current, other));
+                        }
+                    }
+                    if (q != parent && isEdge(current, q, edgeThreshold)) {
+                        if (!notVisited.contains(q)) return false;
+                        stack.push(new Pair<>(current, q));
                     }
                 }
             }
