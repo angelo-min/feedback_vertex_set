@@ -2,76 +2,131 @@ package algorithms;
 
 import java.awt.Point;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DefaultTeam {
 
+  private static final int MAX_POPULATION = 10; //max number of solutions in the population
+  private static final int MAX_ITERATIONS = 2024; //max number of iterations
+
   public ArrayList<Point> calculFVS(ArrayList<Point> _points, int edgeThreshold) {
     HashSet<Point> points = new HashSet<>(_points);
-    ArrayList<Point> result = null;
-    ArrayList<Point> greed = greedy(points,edgeThreshold);
+    
+    PriorityQueue<ArrayList<Point>> population = generateInitialPopulation(points, edgeThreshold, MAX_POPULATION);
 
-    for (int i=0;i<6;i++){
-      ArrayList<Point> fvs = localSearch(greed,points,edgeThreshold);
+    int no_improvement_counter = 0;
 
-      System.out.println("MAIN. Current sol: " + (result == null ? _points.size() : result.size()) + ". Found next sol: "+fvs.size());
+    ArrayList<Point> bestSolution = new ArrayList<>();
+    for (int iter=0;iter<MAX_ITERATIONS;iter++){
+      PriorityQueue<ArrayList<Point>> nextPopulation = new PriorityQueue<>(Comparator.comparingInt(this::score));
 
-      if (result == null || fvs.size()<result.size()) result = fvs;
+      while(!population.isEmpty()){
+        ArrayList<Point> solution = population.poll();
+        nextPopulation.add(localSearch(solution, points, edgeThreshold));
+      }
+
+      //add new greedy solutions to the population
+      for (int i=0; i<MAX_POPULATION /2; i++){
+        nextPopulation.add(greedy(points, edgeThreshold));
+      }
+
+      //keep only the best solutions
+      while(nextPopulation.size() > MAX_POPULATION){
+        ArrayList<Point> worstSolution = Collections.max(nextPopulation, Comparator.comparingInt(this::score));
+        nextPopulation.remove(worstSolution);
+      }
+
+      population = nextPopulation;
+
+      ArrayList<Point> olderSolution = bestSolution;
+      bestSolution = population.peek();
+      System.out.println("Current best solution in iteration: " + iter + " size: " + bestSolution.size());
+
+      if(bestSolution.size() < olderSolution.size()){
+        no_improvement_counter = 0;
+      }else{
+        no_improvement_counter++;
+      }
+      if(no_improvement_counter > 3){
+        break;
+      }
     }
     
-    return new ArrayList<>(result);
+    return population.peek();
     //return greedy(points,edgeThreshold);
   }
 
-  private ArrayList<Point> greedy(HashSet<Point> points, int edgeThreshold) {
-    ArrayList<Point> result = null;
-    
-    for (int i=0;i<100;i++) {
-      HashMap<Point, Integer> degrees = new HashMap<>();
-      for (Point p: points) degrees.put(p, degree(p, points, edgeThreshold));
-      ArrayList<Point> pointsSorted = new ArrayList<>(points);
-      pointsSorted.sort((a, b) -> degrees.get(b) - degrees.get(a));
-      ArrayList<Point> fvs = new ArrayList<>();
-
-
-      while (!isSolution(fvs,points,edgeThreshold)) {
-        Point choosenOne=pointsSorted.get(0);
-        /*for (Point p: pointsSorted) {
-          if (degree(p, points, edgeThreshold) >
-              degree(choosenOne, points, edgeThreshold)) {
-            choosenOne=p;
-          }
-        }*/
-        fvs.add(choosenOne);
-        pointsSorted.removeAll(fvs);
-      }
-      
-//      System.out.println("GR. Current sol: " + result.size() + ". Found next sol: "+fvs.size());
-
-      if (result == null || fvs.size()<result.size()) result = fvs;
-
-    }
-
-    return result;
+  private PriorityQueue<ArrayList<Point>> generateInitialPopulation(HashSet<Point> points, int edgeThreshold, int size){
+    if (points == null || points.isEmpty()) {
+      throw new IllegalArgumentException("Input points are null or empty.");
   }
-  private ArrayList<Point> localSearch(ArrayList<Point> firstSolution, HashSet<Point> points, int edgeThreshold) {
-    ArrayList<Point> current = firstSolution;
-    ArrayList<Point> next = current;
+  
+    PriorityQueue<ArrayList<Point>> population = new PriorityQueue<>(Comparator.comparingInt(this::score));
+    for (int i = 0; i < size; i++){
+      ArrayList<Point> solution = greedy(points, edgeThreshold);
+      if(solution.isEmpty()){
+        System.out.println("Warning: Generated an empty solution during initial population generation");
+      }
+      population.add(greedy(points, edgeThreshold));
+    }
+    return population;
+  }
+
+private ArrayList<Point> greedy(HashSet<Point> points, int edgeThreshold) {
+  HashSet<Point> pointsCopy = new HashSet<>(points); // Create a copy of points
+
+  ArrayList<Point> result = new ArrayList<>();
+  HashMap<Point, Integer> degreeCache = new HashMap<>();
+  pointsCopy.forEach(p -> degreeCache.put(p, degree(p, pointsCopy, edgeThreshold)));
+  Random random = new Random();
+  
+  while (!isSolution(result, pointsCopy, edgeThreshold)) {
+    if (pointsCopy.isEmpty()) {
+      System.err.println("Error: Points exhausted before FVS is valid.");
+      break;
+    }
+    List<Point> sortedPoints = new ArrayList<>(pointsCopy);
+    sortedPoints.sort((a, b) -> degreeCache.get(b) - degreeCache.get(a));
+    //get the highest degree node 9/10 times and the second highest 1/10 times
+    Point chosenOne = random.nextInt(10) == 0 && sortedPoints.size() > 1 
+      ? sortedPoints.get(1) 
+      : sortedPoints.get(0);
+    result.add(chosenOne);
+    pointsCopy.remove(chosenOne);
+    for (Point p : pointsCopy) if (isEdge(chosenOne, p, edgeThreshold)) {
+      degreeCache.put(p, degreeCache.get(p) - 1);
+    }
+    degreeCache.remove(chosenOne);
+  }
+
+  return result;
+}
+  private ArrayList<Point> localSearch(ArrayList<Point> solution, HashSet<Point> points, int edgeThreshold) {
+    ArrayList<Point> current = new ArrayList<>(solution);
+    int noImprovementCounter = 0;
 
     //System.out.println("LS. First sol: " + current.size());
 
-    do {
-      current = next;
-      next = remove2add1(current, points,edgeThreshold);
-      //System.out.println("LS. Current sol: " + current.size() + ". Found next sol: "+next.size());
-    } while (score(current)>score(next));
-    
+    for (int iter = 0; iter < 10; iter ++){
+      ArrayList<Point> next = remove2add1(current, points, edgeThreshold);
+      if (score(next) < score(current)){
+        current = next;
+        noImprovementCounter = 0;
+      }else{
+        noImprovementCounter++;
+      }
+      if(noImprovementCounter > 3){
+        break;
+      }
+    }
     //System.out.println("LS. Last sol: " + current.size());
-    return next;
+    return current;
 
 //  return current;
   }
@@ -150,7 +205,7 @@ public class DefaultTeam {
     return p.distance(q)<edgeThreshold;
   }
   private int degree(Point p, Collection<Point> points, int edgeThreshold) {
-    int degree=-1;
+    int degree=0;
     for (Point q: points) if (isEdge(p,q,edgeThreshold)) degree++;
     return degree;
   }
@@ -160,15 +215,23 @@ public class DefaultTeam {
 
   public static void main(String[] args) {
     // Create an instance of DefaultTeam and Evaluation
+
     DefaultTeam team = new DefaultTeam();
     Evaluation eval = new Evaluation();
 
-    // Prepare the list of points
-    ArrayList<Point> points = new ArrayList<>();
     String filePath = "input.points"; // Path to the file
 
-    // Read points from file
-    try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+    RandomPointsGenerator randomPointsGenerator = new RandomPointsGenerator();
+
+    int totalFVSsize = 0;
+    int validSolutions = 0;
+
+    for (int i =0; i<100; i++){
+      randomPointsGenerator.generate(150);
+      
+      ArrayList<Point> points = new ArrayList<>();
+      // Read points from file
+      try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
         String line;
         while ((line = br.readLine()) != null) {
             String[] parts = line.split(" ");
@@ -176,27 +239,34 @@ public class DefaultTeam {
             int y = Integer.parseInt(parts[1]);
             points.add(new Point(x, y));
         }
-    } catch (IOException e) {
-        System.err.println("Error reading file: " + e.getMessage());
-        return;
-    }
+      } catch (IOException e) {
+          System.err.println("Error reading file: " + e.getMessage());
+          return;
+      }
 
     // Define edgeThreshold (modify as needed)
-    int edgeThreshold = 100;
+      int edgeThreshold = 100;
 
-    // Compute the FVS
-    ArrayList<Point> fvs = team.calculFVS(points, edgeThreshold);
+      ArrayList<Point> fvs = team.calculFVS(points, edgeThreshold);
 
-    // Validate the solution
-    boolean isValid = eval.isValid(points, fvs, edgeThreshold);
+      boolean isValid = eval.isValid(points, fvs, edgeThreshold);
 
-    // Print results
-    System.out.println("Computed Feedback Vertex Set (FVS):");
-    for (Point p : fvs) {
-        System.out.println(p);
+      // Print results
+      System.out.println("Computed Feedback Vertex Set (FVS):");
+      for (Point p : fvs) {
+          System.out.println(p);
+      }
+      System.out.println("Size of FVS: " + fvs.size());
+      System.out.println("Is solution valid? " + (isValid ? "Yes" : "No"));
+      if(isValid){
+        totalFVSsize += fvs.size();
+        validSolutions++;
+      }
+      System.err.println("Average current size of FVS: " + (double)totalFVSsize/(i+1));
     }
-    System.out.println("Size of FVS: " + fvs.size());
-    System.out.println("Is solution valid? " + (isValid ? "Yes" : "No"));
+    System.out.println("Average size of FVS: " + (double)totalFVSsize/100);
+    System.out.println("Valid solutions: " + validSolutions + "/100");
+    
 }
 
 }

@@ -1,0 +1,88 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "init",
+            "type": "shell",
+            "command": "mkdir -p javabeans tests",
+            "problemMatcher": []
+        },
+        {
+            "label": "compile",
+            "type": "shell",
+            "dependsOn": [
+                "init"
+            ],
+            "command": "javac",
+            "args": [
+                "-d",
+                "javabeans",
+                "-cp",
+                "jars/*",
+                "src/**/*.java"
+            ],
+            "problemMatcher": {
+                "owner": "java",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.*\\.java):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 3
+                }
+            }
+        },
+        {
+            "label": "rand",
+            "type": "shell",
+            "dependsOn": [
+                "compile"
+            ],
+            "command": "java",
+            "args": [
+                "-cp",
+                "javabeans:jars/*",
+                "supportGUI.RandomPointsGenerator"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "run",
+            "type": "shell",
+            "dependsOn": [
+                "compile"
+            ],
+            "command": "java",
+            "args": [
+                "-cp",
+                "javabeans:\"jars/*\"",
+                "supportGUI.DiskGraphsViewer",
+                "-nbPoints",
+                "150",
+                "-edgeThreshold",
+                "100"
+            ],
+            "options": {
+                "cwd": "/Users/angelo/Desktop/Università/Erasmus/DAAR/project_graph_1"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "clean",
+            "type": "shell",
+            "command": "rm -rf javabeans tests",
+            "problemMatcher": []
+        },
+        {
+            "type": "java (build)",
+            "paths": [
+                "${workspace}"
+            ],
+            "isFullBuild": true,
+            "group": "build",
+            "problemMatcher": [],
+            "label": "java (build): Build Workspace",
+            "detail": "$(tools) Build all the Java projects in workspace."
+        }
+    ]
+}
