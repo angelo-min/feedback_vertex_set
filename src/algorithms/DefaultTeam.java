@@ -52,9 +52,9 @@ public class DefaultTeam {
   private int pointCountShift;
 
   private class PointSet extends AbstractSet<Point> {
-    private boolean[] points = new boolean[pointList.size()];
-    private int[] nexts = new int[pointList.size()];
-    private int[] prevs = new int[pointList.size()];
+    private boolean[] points = new boolean[pointCount];
+    private int[] nexts = new int[pointCount];
+    private int[] prevs = new int[pointCount];
     private int first = -1;
     private int size = 0;
 
@@ -66,9 +66,9 @@ public class DefaultTeam {
       if (collection instanceof PointSet pointSet) {
         size = pointSet.size;
         first = pointSet.first;
-        System.arraycopy(pointSet.points, 0, points, 0, pointList.size());
-        System.arraycopy(pointSet.nexts, 0, nexts, 0, pointList.size());
-        System.arraycopy(pointSet.prevs, 0, prevs, 0, pointList.size());
+        System.arraycopy(pointSet.points, 0, points, 0, pointCount);
+        System.arraycopy(pointSet.nexts, 0, nexts, 0, pointCount);
+        System.arraycopy(pointSet.prevs, 0, prevs, 0, pointCount);
       } else {
         clear();
         addAll(collection);
@@ -189,7 +189,7 @@ public class DefaultTeam {
     pointMap = new HashMap<>();
     pointList = new ArrayList<>();
 
-    edgeMap = new boolean[_points.size() * _points.size()];
+    edgeMap = new boolean[_points.size() << pointCountShift];
     simplePointArr = new Point[_points.size()];
     for (java.awt.Point p: _points) {
       pointList.add(p);
@@ -202,7 +202,7 @@ public class DefaultTeam {
 
     for (Point p: points) {
       for (Point q: points) {
-        edgeMap[p.id * simplePointArr.length + q.id] = pointList.get(p.id).distance(pointList.get(q.id)) < edgeThreshold;
+        edgeMap[(p.id << pointCountShift) + q.id] = pointList.get(p.id).distance(pointList.get(q.id)) < edgeThreshold;
       }
     }
 
@@ -340,7 +340,7 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
 
           for (Point r : rest) {
             solutionRest.remove(r);
-            if (isSolution(new PointSet(solutionRest), edgeThreshold)) {
+            if (isSolution(solutionRest, edgeThreshold)) {
               if (done.getAndSet(true)) break;
               test.remove(j);
               test.remove(finalI);
@@ -370,7 +370,13 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
   }
   private boolean isSolution(PointSet rest, int edgeThreshold) {
     if (rest.isEmpty()) return true;
-
+    Point[] restArray = new Point[rest.size];
+    {
+      Iterator<Point> setIt = rest.iterator();
+      for (int i = 0; i < restArray.length; i++) {
+        restArray[i] = setIt.next();
+      }
+    }
     PointSet notVisited = new PointSet(rest);
     ArrayDeque<Pair<Point, Point>> stack = new ArrayDeque<>();
 
@@ -385,7 +391,7 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
         Pair<Point, Point> frame = stack.pop();
         Point parent = frame.first, current = frame.second;
         notVisited.remove(current);
-        for (Point other : rest) {
+        for (Point other: restArray) {
           if (other != current && other != parent && isEdge(current, other, edgeThreshold)) {
             if (!notVisited.contains(other)) return false;
             stack.push(new Pair<>(current, other));
@@ -397,7 +403,7 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
     return true;
   }
   private boolean isEdge(Point p, Point q, int edgeThreshold) {
-    return edgeMap[p.id * simplePointArr.length + q.id];
+    return edgeMap[(p.id << pointCountShift) + q.id];
   }
   private int degree(Point p, Collection<Point> points, int edgeThreshold) {
     int degree=0;
