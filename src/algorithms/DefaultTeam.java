@@ -5,6 +5,9 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -300,17 +303,19 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
     int noImprovementCounter = 0;
 
     //System.out.println("LS. First sol: " + current.size());
-
-    for (int iter = 0; iter < 10; iter ++){
-      ArrayList<Point> next = remove2add1(current, points, edgeThreshold);
+    ArrayList<Point> next = remove2add1(current, points, edgeThreshold);
+    for (int iter = 0; iter <2000; iter ++){
+      
       if (score(next) < score(current)){
+        next = remove2add1(next, points, edgeThreshold);
         current = next;
         noImprovementCounter = 0;
       }else{
         noImprovementCounter++;
       }
-      if(noImprovementCounter > 3){
-        break;
+      if(noImprovementCounter > 1200){
+        next = remove3add2(current, points, edgeThreshold);
+        noImprovementCounter -= 400;
       }
     }
     //System.out.println("LS. Last sol: " + current.size());
@@ -363,6 +368,74 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
     }
     return test;
   }
+
+  private ArrayList<Point> remove3add2(ArrayList<Point> candidate, PointSet points, int edgeThreshold) {
+    ArrayList<Point> currentSolution = new ArrayList<>(candidate);
+    PointSet rest = new PointSet(points);
+    currentSolution.forEach(rest::remove);
+    AtomicBoolean done = new AtomicBoolean(false);
+    Random random = new Random();
+
+    // ScheduledExecutorService to handle timeout
+    ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
+    Semaphore semaphore = new Semaphore(0);
+
+    // Thread pool for parallel processing
+    int threadCount = Math.min(Runtime.getRuntime().availableProcessors(), currentSolution.size());
+    ExecutorService threadPool = Executors.newFixedThreadPool(threadCount);
+
+    // Start a timeout task
+    executor.schedule(() -> {
+        done.set(true); // Signal threads to stop
+        semaphore.release(threadCount); // Release all threads waiting on semaphore
+    }, 2, TimeUnit.SECONDS);
+
+    for (int t = 0; t < threadCount; t++) {
+        threadPool.submit(() -> {
+            while (!done.get()) {
+                // Randomly sample three points to remove
+                ArrayList<Point> tempSolution = new ArrayList<>(currentSolution);
+                if (tempSolution.size() < 3) break;
+
+                Point p1 = tempSolution.remove(random.nextInt(tempSolution.size()));
+                Point p2 = tempSolution.remove(random.nextInt(tempSolution.size()));
+                Point p3 = tempSolution.remove(random.nextInt(tempSolution.size()));
+
+                // Randomly sample two points to add
+                ArrayList<Point> restList = new ArrayList<>(rest);
+                if (restList.size() < 2) continue;
+
+                Point r1 = restList.get(random.nextInt(restList.size()));
+                Point r2 = restList.get(random.nextInt(restList.size()));
+
+                tempSolution.add(r1);
+                tempSolution.add(r2);
+
+                // Check validity
+                if (isSolution(tempSolution, points, edgeThreshold)) {
+                    synchronized (currentSolution) {
+                        if (tempSolution.size() < currentSolution.size()) {
+                            currentSolution.clear();
+                            currentSolution.addAll(tempSolution);
+                            done.set(true); // Mark the solution as found
+                        }
+                    }
+                }
+            }
+            semaphore.release(); // Release when thread finishes
+        });
+    }
+
+    try {
+        semaphore.acquire(threadCount); // Wait for all threads to complete or timeout
+    } catch (InterruptedException e) {
+        throw new RuntimeException(e);
+    }
+
+    threadPool.shutdownNow(); // Ensure all threads are terminated
+    executor.shutdownNow(); // Stop the timeout task
+    return currentSolution;
+}
   private boolean isSolution(ArrayList<Point> candidate, PointSet pointsIn, int edgeThreshold) {
     PointSet rest = new PointSet(pointsIn);
     candidate.forEach(rest::remove);
