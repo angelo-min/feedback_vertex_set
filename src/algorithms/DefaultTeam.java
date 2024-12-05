@@ -9,12 +9,34 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-record Pair<T1, T2>(T1 first, T2 second) {
+class Pair<T1, T2> {
+  public final T1 first;
+  public final T2 second;
 
+  Pair(T1 first, T2 second) {
+    this.first = first;
+    this.second = second;
+  }
 }
 
-record Point(int id) {
+class Point {
+  public final int id;
 
+  Point(int id) {
+      this.id = id;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof Point point)) return false;
+    return id == point.id;
+  }
+
+  @Override
+  public int hashCode() {
+    return id;
+  }
 }
 
 public class DefaultTeam {
@@ -22,11 +44,13 @@ public class DefaultTeam {
   private static final int MAX_POPULATION = 10; //max number of solutions in the population
   private static final int MAX_ITERATIONS = 2024; //max number of iterations
   
-  private boolean[][] edgeMap;
+  private boolean[] edgeMap;
   private HashMap<java.awt.Point, Point> pointMap;
   private ArrayList<java.awt.Point> pointList;
   private Point[] simplePointArr;
-  
+  private int pointCount;
+  private int pointCountShift;
+
   private class PointSet extends AbstractSet<Point> {
     private boolean[] points = new boolean[pointList.size()];
     private int[] nexts = new int[pointList.size()];
@@ -63,7 +87,7 @@ public class DefaultTeam {
 
     @Override
     public boolean contains(Object o) {
-      return points[((Point) o).id()];
+      return points[((Point) o).id];
     }
 
     public boolean containsId(int id) {
@@ -73,20 +97,17 @@ public class DefaultTeam {
     @Override
     public Iterator<Point> iterator() {
       return new Iterator<>() {
-        int curId = -2;
+        int curId = first;
         @Override
         public boolean hasNext() {
-            return curId != -1 && (curId == -2 ? first : nexts[curId]) != -1;
+            return curId != -1;
         }
 
         @Override
         public Point next() {
-          int nextCur;
-          if (curId == -1 || (nextCur = (curId == -2 ? first : nexts[curId])) == -1) {
-            throw new NoSuchElementException();
-          }
-          curId = nextCur;
-          return simplePointArr[curId];
+          Point res = simplePointArr[curId];
+          curId = nexts[curId];
+          return res;
         }
 
         @Override
@@ -98,7 +119,7 @@ public class DefaultTeam {
 
     @Override
     public boolean add(Point point) {
-      int id = point.id();
+      int id = point.id;
       boolean changed = !points[id];
       points[id] = true;
       if (changed) {
@@ -149,7 +170,7 @@ public class DefaultTeam {
 
     @Override
     public boolean remove(Object o) {
-      return removeId(((Point) o).id());
+      return removeId(((Point) o).id);
     }
 
     @Override
@@ -163,29 +184,31 @@ public class DefaultTeam {
   }
   
   public ArrayList<java.awt.Point> calculFVS(ArrayList<java.awt.Point> _points, int edgeThreshold) {
+    pointCount = _points.size();
+    pointCountShift = 32 - Integer.numberOfLeadingZeros(pointCount);
     pointMap = new HashMap<>();
     pointList = new ArrayList<>();
 
-    edgeMap = new boolean[_points.size()][_points.size()];
+    edgeMap = new boolean[_points.size() * _points.size()];
     simplePointArr = new Point[_points.size()];
     for (java.awt.Point p: _points) {
       pointList.add(p);
       Point newPoint = new Point(pointList.size() - 1);
       pointMap.put(p, newPoint);
-      simplePointArr[newPoint.id()] = newPoint;
+      simplePointArr[newPoint.id] = newPoint;
     }
     PointSet points = new PointSet();
     points.addAll(pointMap.values());
 
     for (Point p: points) {
       for (Point q: points) {
-        edgeMap[p.id()][q.id()] = pointList.get(p.id()).distance(pointList.get(q.id())) < edgeThreshold;
+        edgeMap[p.id * simplePointArr.length + q.id] = pointList.get(p.id).distance(pointList.get(q.id)) < edgeThreshold;
       }
     }
 
     PriorityQueue<ArrayList<Point>> population = generateInitialPopulation(points, edgeThreshold, MAX_POPULATION);
 
-    int no_improvement_counter = 0;
+    int no_improvement_counter = -1; // gotta love off-by-ones
 
     ArrayList<Point> bestSolution = new ArrayList<>();
     for (int iter=0;iter<MAX_ITERATIONS;iter++){
@@ -222,8 +245,8 @@ public class DefaultTeam {
         break;
       }
     }
-    
-    return new ArrayList<>(population.peek().stream().map(p -> pointList.get(p.id())).toList());
+
+    return new ArrayList<>(population.peek().stream().map(p -> pointList.get(p.id)).toList());
     //return greedy(points,edgeThreshold);
   }
 
@@ -231,7 +254,7 @@ public class DefaultTeam {
     if (points == null || points.isEmpty()) {
       throw new IllegalArgumentException("Input points are null or empty.");
   }
-  
+
     PriorityQueue<ArrayList<Point>> population = new PriorityQueue<>(Comparator.comparingInt(this::score));
     for (int i = 0; i < size; i++){
       ArrayList<Point> solution = greedy(points, edgeThreshold);
@@ -250,7 +273,7 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
   HashMap<Point, Integer> degreeCache = new HashMap<>();
   pointsCopy.forEach(p -> degreeCache.put(p, degree(p, pointsCopy, edgeThreshold)));
   Random random = new Random();
-  
+
   while (!isSolution(result, pointsCopy, edgeThreshold)) {
     if (pointsCopy.isEmpty()) {
       System.err.println("Error: Points exhausted before FVS is valid.");
@@ -259,8 +282,8 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
     List<Point> sortedPoints = new ArrayList<>(pointsCopy);
     sortedPoints.sort((a, b) -> degreeCache.get(b) - degreeCache.get(a));
     //get the highest degree node 9/10 times and the second highest 1/10 times
-    Point chosenOne = random.nextInt(10) == 0 && sortedPoints.size() > 1 
-      ? sortedPoints.get(1) 
+    Point chosenOne = random.nextInt(10) == 0 && sortedPoints.size() > 1
+      ? sortedPoints.get(1)
       : sortedPoints.get(0);
     result.add(chosenOne);
     pointsCopy.remove(chosenOne);
@@ -346,16 +369,6 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
     return isSolution(rest, edgeThreshold);
   }
   private boolean isSolution(PointSet rest, int edgeThreshold) {
-    return isSolution2(rest, edgeThreshold);
-    // boolean r3 = new Evaluation().isValid(new ArrayList<>(rest), new ArrayList<>(), edgeThreshold);
-    // boolean r2 = isSolution2(rest, edgeThreshold);
-    // boolean r1 = isSolution1(rest, edgeThreshold);
-    // if (r2 != r3) {
-      // throw new RuntimeException("Error " + r1 + " " + r2 + " " + r3);
-    // }
-    // return r1;
-  }
-  private boolean isSolution2(PointSet rest, int edgeThreshold) {
     if (rest.isEmpty()) return true;
 
     PointSet notVisited = new PointSet(rest);
@@ -370,7 +383,7 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
 
       while (!stack.isEmpty()) {
         Pair<Point, Point> frame = stack.pop();
-        Point parent = frame.first(), current = frame.second();
+        Point parent = frame.first, current = frame.second;
         notVisited.remove(current);
         for (Point other : rest) {
           if (other != current && other != parent && isEdge(current, other, edgeThreshold)) {
@@ -383,29 +396,8 @@ private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
 
     return true;
   }
-  private boolean isSolution1(PointSet rest, int edgeThreshold) {
-    ArrayList<Point> visited = new ArrayList<>();
-
-    while (!rest.isEmpty()) {
-      visited.clear();
-      Iterator<Point> it = rest.iterator();
-      visited.add(it.next());
-      it.remove();
-      for (int i=0;i<visited.size();i++) {
-        for (Point p: rest) if (isEdge(visited.get(i),p,edgeThreshold)) {
-          for (Point q: visited) {
-            if (!q.equals(visited.get(i)) && isEdge(p, q, edgeThreshold))
-              return false;
-          }
-          visited.add(p);
-        }
-      }
-    }
-
-    return true;
-  }
   private boolean isEdge(Point p, Point q, int edgeThreshold) {
-    return edgeMap[p.id()][q.id()];
+    return edgeMap[p.id * simplePointArr.length + q.id];
   }
   private int degree(Point p, Collection<Point> points, int edgeThreshold) {
     int degree=0;
