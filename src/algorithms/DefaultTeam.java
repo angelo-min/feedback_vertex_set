@@ -60,10 +60,11 @@ public class DefaultTeam {
     // MAX_POPULATION=10 and MAX_NO_PROGRESS=2 gave 80.74 in 6 minutes
     // MAX_POPULATION=14 and MAX_NO_PROGRESS=3 gave 80.55 in 16 minutes on a weaker computer
     // MAX_POPULATION=20 and MAX_NO_PROGRESS=4 gave 80.46 in 30 minutes on a weaker computer
+    // MAX_POPULATION=100 and MAX_NO_PROGRESS=5 gave 80.24 in 1 hour 30 minutes
     // MAX_POPULATION=200 and MAX_NO_PROGRESS=5 gave 80.21 in about 4 hours
 
-    private static final int MAX_POPULATION = 20; //max number of solutions in the population
-    private static final int MAX_NO_PROGRESS = 4;
+    private static final int MAX_POPULATION = 100; //max number of solutions in the population
+    private static final int MAX_NO_PROGRESS = 5;
     private static final int MAX_ITERATIONS = 2024; //max number of iterations
 
     private boolean[] edgeMap;
@@ -238,6 +239,7 @@ public class DefaultTeam {
         pointMap = new HashMap<>();
         pointList = new ArrayList<>();
 
+        // use shift instead of multiplication because the isEdge function is called a lot
         edgeMap = new boolean[_points.size() << pointCountShift];
         simplePointArr = new Point[_points.size()];
         for (java.awt.Point p: _points) {
@@ -425,6 +427,7 @@ public class DefaultTeam {
         return test;
     }
 
+    // i never got it to find any better solutions so we dont use it
     private ArrayList<Point> remove3add2(ArrayList<Point> candidate, PointSet points, int edgeThreshold) {
         ArrayList<Point> currentSolution = new ArrayList<>(candidate);
         PointSet rest = new PointSet(points);
