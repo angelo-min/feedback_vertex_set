@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-class Pair<T1, T2> {
+final class Pair<T1, T2> {
     public final T1 first;
     public final T2 second;
 
@@ -16,9 +16,27 @@ class Pair<T1, T2> {
         this.first = first;
         this.second = second;
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Pair<?,?>)) return false;
+
+        Pair<?, ?> pair = (Pair<?, ?>) o;
+
+        if (!Objects.equals(first, pair.first)) return false;
+        return Objects.equals(second, pair.second);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = first != null ? first.hashCode() : 0;
+        result = 31 * result + (second != null ? second.hashCode() : 0);
+        return result;
+    }
 }
 
-class Point {
+final class Point {
     public final int id;
 
     Point(int id) {
@@ -39,8 +57,13 @@ class Point {
 }
 
 public class DefaultTeam {
+    // MAX_POPULATION=10 and MAX_NO_PROGRESS=2 gave 80.74 in 6 minutes
+    // MAX_POPULATION=14 and MAX_NO_PROGRESS=3 gave 80.55 in 16 minutes on a weaker computer
+    // MAX_POPULATION=20 and MAX_NO_PROGRESS=4 gave 80.46 in 30 minutes on a weaker computer
+    // MAX_POPULATION=200 and MAX_NO_PROGRESS=5 gave 80.21 in about 4 hours
 
-    private static final int MAX_POPULATION = 200; //max number of solutions in the population
+    private static final int MAX_POPULATION = 20; //max number of solutions in the population
+    private static final int MAX_NO_PROGRESS = 4;
     private static final int MAX_ITERATIONS = 2024; //max number of iterations
 
     private boolean[] edgeMap;
@@ -50,12 +73,17 @@ public class DefaultTeam {
     private int pointCount;
     private int pointCountShift;
 
-    private class PointSet extends AbstractSet<Point> {
+    // optimized points set that contains a boolean array (since the amount of points is very limited)
+    // has nexts and prevs array that induce a linked list that speeds up iteration for more sparse sets
+    // for iteration heavy functions we try to use random access containers anyway
+    private final class PointSet extends AbstractSet<Point> {
         private boolean[] points = new boolean[pointCount];
         private int[] nexts = new int[pointCount];
         private int[] prevs = new int[pointCount];
         private int first = -1;
         private int size = 0;
+        private boolean cacheReset = true;
+        private int hashCache = 0;
 
         public PointSet() {
             clear();
@@ -122,6 +150,7 @@ public class DefaultTeam {
             boolean changed = !points[id];
             points[id] = true;
             if (changed) {
+                cacheReset = true;
                 size++;
                 if (first == -1) {
                     first = id;
@@ -152,6 +181,7 @@ public class DefaultTeam {
             boolean changed = points[id];
             points[id] = false;
             if (changed) {
+                cacheReset = true;
                 size--;
                 int prev = prevs[id], next = nexts[id];
                 if (first == id) {
@@ -180,9 +210,29 @@ public class DefaultTeam {
             first = -1;
             size = 0;
         }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof PointSet pointSet)) return false;
+            if (size != pointSet.size) return false;
+            if (!cacheReset && !pointSet.cacheReset && hashCache != pointSet.hashCache) return false;
+
+            return Arrays.equals(points, pointSet.points);
+        }
+
+        @Override
+        public int hashCode() {
+            if (cacheReset) {
+                hashCache = Arrays.hashCode(points);
+                cacheReset = false;
+            }
+            return hashCache;
+        }
     }
 
     public ArrayList<java.awt.Point> calculFVS(ArrayList<java.awt.Point> _points, int edgeThreshold) {
+        // we convert the input points into simple classes that just contain an id for the sake of speed
         pointCount = _points.size();
         pointCountShift = 32 - Integer.numberOfLeadingZeros(pointCount);
         pointMap = new HashMap<>();
@@ -212,13 +262,7 @@ public class DefaultTeam {
         ArrayList<Point> bestSolution = new ArrayList<>();
         for (int iter=0;iter<MAX_ITERATIONS;iter++){
             PriorityQueue<ArrayList<Point>> nextPopulation = new PriorityQueue<>(Comparator.comparingInt(this::score));
-
-            while(!population.isEmpty()){
-                ArrayList<Point> solution = population.poll();
-                ArrayList<Point> res = localSearch(solution, points, edgeThreshold);
-                nextPopulation.add(res);
-            }
-
+            nextPopulation.addAll(population);
             //keep only the best solutions
             while(nextPopulation.size() > MAX_POPULATION/2){
                 ArrayList<Point> worstSolution = Collections.max(nextPopulation, Comparator.comparingInt(this::score));
@@ -227,7 +271,7 @@ public class DefaultTeam {
 
             //add new greedy solutions to the population
             while (nextPopulation.size() < MAX_POPULATION) {
-                nextPopulation.add(greedy(points, edgeThreshold));
+                nextPopulation.add(localSearch(greedy(points, edgeThreshold), points, edgeThreshold));
             }
 
             population = nextPopulation;
@@ -241,7 +285,7 @@ public class DefaultTeam {
             }else{
                 no_improvement_counter++;
             }
-            if(no_improvement_counter >= 5){
+            if(no_improvement_counter >= MAX_NO_PROGRESS){
                 break;
             }
         }
@@ -261,7 +305,7 @@ public class DefaultTeam {
             if(solution.isEmpty()){
                 System.out.println("Warning: Generated an empty solution during initial population generation");
             }
-            population.add(greedy(points, edgeThreshold));
+            population.add(localSearch(greedy(points, edgeThreshold), points, edgeThreshold));
         }
         return population;
     }
@@ -269,12 +313,24 @@ public class DefaultTeam {
     private ArrayList<Point> greedy(PointSet points, int edgeThreshold) {
         PointSet pointsCopy = new PointSet(points); // Create a copy of points
 
-        ArrayList<Point> result = new ArrayList<>();
-        HashMap<Point, Integer> degreeCache = new HashMap<>();
-        pointsCopy.forEach(p -> degreeCache.put(p, degree(p, pointsCopy, edgeThreshold)));
         Random random = new Random();
+        ArrayList<Point> result = new ArrayList<>();
 
         while (!isSolution(result, pointsCopy, edgeThreshold)) {
+            HashMap<Point, Integer> degreeCache = new HashMap<>();
+            top: while (true) {
+                degreeCache.clear();
+                for (Point p : pointsCopy) {
+                    int res = degree(p, pointsCopy, edgeThreshold);
+                    if (res <= 1) { // throw out leaf nodes, almost never happens
+                        pointsCopy.remove(p);
+                        continue top;
+                    }
+                    degreeCache.put(p, res);
+                }
+                break;
+            }
+
             if (pointsCopy.isEmpty()) {
                 System.err.println("Error: Points exhausted before FVS is valid.");
                 break;
@@ -289,10 +345,6 @@ public class DefaultTeam {
                     : sortedPoints.get(0);
             result.add(chosenOne);
             pointsCopy.remove(chosenOne);
-            for (Point p : pointsCopy) if (isEdge(chosenOne, p, edgeThreshold)) {
-                degreeCache.put(p, degreeCache.get(p) - 1);
-            }
-            degreeCache.remove(chosenOne);
         }
 
         return result;
